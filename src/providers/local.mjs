@@ -55,10 +55,11 @@ export default {
     if (!r.ok) {
       return {
         ok: true,
+        availabilityHint: 'unreachable', // 端口没在跑 = 网络不可达
         online: false,
         balance: null,
         balanceLabel: '状态',
-        details: [{ label: '状态', value: '离线' }, { label: '地址', value: baseUrl }]
+        details: [{ label: '地址', value: baseUrl }]
       }
     }
 
@@ -80,6 +81,7 @@ export default {
 
     return {
       ok: true,
+      availabilityHint: 'ok',
       online: true,
       balance: null,
       balanceLabel: '状态',

@@ -26,6 +26,14 @@ export default {
     return this.keyNames.includes(endpoint.keyEnv)
   },
 
+  /** 付费探测(兜底用)。模型名未实测 —— 出错会以 config_error 暴露,不会误报厂商故障。 */
+  probe: {
+    path: '/chat/completions',
+    body: { model: 'moonshot-v1-8k', max_tokens: 1, messages: [{ role: 'user', content: '.' }] },
+    cost: 'token',
+    verified: false
+  },
+
   async query({ key, baseUrl, endpoint, fetchJson }) {
     if (!key) return { ok: false, reason: 'unconfigured' }
 

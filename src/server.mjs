@@ -58,14 +58,14 @@ const server = createServer(async (req, res) => {
       return send(res, 200, payload)
     }
     if (url.pathname === '/health') {
-      return send(res, 200, { ok: true, service: 'hermes-api-usage', port: PORT, uptime_s: Math.round(process.uptime()) })
+      return send(res, 200, { ok: true, service: 'hermes-keywatch', port: PORT, uptime_s: Math.round(process.uptime()) })
     }
     if (url.pathname === '/' || url.pathname === '/index.html') {
       return send(
         res,
         200,
         [
-          'hermes-api-usage — 多厂商 API 余额/用量聚合服务',
+          'hermes-keywatch — 多厂商 API 余额/用量聚合服务',
           '',
           `  GET /balances          聚合快照(默认缓存 ${CACHE_MS / 1000}s)`,
           '  GET /balances?refresh=1  强制刷新',
@@ -82,7 +82,7 @@ const server = createServer(async (req, res) => {
 })
 
 server.listen(PORT, HOST, () => {
-  console.log(`[hermes-api-usage] listening on http://${HOST}:${PORT}  (cache ${CACHE_MS / 1000}s)`)
+  console.log(`[hermes-keywatch] listening on http://${HOST}:${PORT}  (cache ${CACHE_MS / 1000}s)`)
 })
 
 for (const sig of ['SIGINT', 'SIGTERM']) {

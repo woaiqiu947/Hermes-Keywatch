@@ -14,10 +14,26 @@ export default {
   homepage: 'https://platform.minimaxi.com/user-center/basic-information',
   keyNames: ['MINIMAX_API_KEY', 'MINIMAX_CN_API_KEY'],
   defaultBaseUrl: 'https://api.minimax.chat/v1',
+  /** query() 是说明性桩函数,不代表 key 有效;可用度交给探测 */
+  balanceProvesKey: false,
 
   match(endpoint) {
     if (/minimax/i.test(endpoint.baseUrl || '')) return true
     return this.keyNames.includes(endpoint.keyEnv)
+  },
+
+  /**
+   * MiniMax 是 OpenAI 兼容接口,用最小对话请求探测。
+   * ⚠️ 端点与模型名**未实测**(本机无 MiniMax key);失败会显示「探测配置错误」。
+   *    可用 API_USAGE_MINIMAX_MODEL 覆盖模型名。
+   */
+  probe: {
+    path: '/text/chatcompletion_v2',
+    method: 'POST',
+    body: { model: 'abab6.5s-chat', max_tokens: 1, messages: [{ role: 'user', content: '.' }] },
+    modelEnv: 'API_USAGE_MINIMAX_MODEL',
+    cost: 'token',
+    verified: false
   },
 
   async query({ key }) {

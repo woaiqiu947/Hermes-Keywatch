@@ -26,6 +26,14 @@ export default {
     return this.keyNames.includes(endpoint.keyEnv)
   },
 
+  /** 无余额接口时才会用到的付费探测(本厂商通常用不上:余额调用已顺带证明 key 有效) */
+  probe: {
+    path: '/chat/completions',
+    body: { model: 'deepseek-chat', max_tokens: 1, messages: [{ role: 'user', content: '.' }] },
+    cost: 'token',
+    verified: true // 实测:HTTP 200
+  },
+
   async query({ key, baseUrl, fetchJson }) {
     if (!key) return { ok: false, reason: 'unconfigured' }
     const r = await fetchJson(this.balanceUrl(baseUrl), {
@@ -57,7 +65,8 @@ export default {
       currency: info.currency,
       balance: total,
       balanceLabel: '账户余额',
-      status: r.data?.is_available === false ? '不可用' : undefined,
+      // DeepSeek 自己会告诉你账户是否可用 —— 直接映射到"余额耗尽"
+      accountUnavailable: r.data?.is_available === false,
       details
     }
   }

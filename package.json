@@ -1,16 +1,18 @@
 {
-  "name": "hermes-api-usage",
-  "version": "1.0.0",
+  "name": "hermes-keywatch",
+  "version": "1.1.0",
   "type": "module",
   "private": false,
-  "description": "Multi-provider API balance & usage dashboard for Hermes Desktop — auto-discovers every provider/key configured on the machine.",
-  "keywords": ["hermes", "hermes-agent", "balance", "usage", "dashboard", "deepseek", "glm", "kimi", "openrouter"],
+  "description": "Multi-provider API balance & usage dashboard for Hermes Desktop - auto-discovers every provider/key configured on the machine, and answers 'can I still call it?' for vendors with no balance API.",
+  "keywords": ["hermes", "hermes-agent", "balance", "usage", "quota", "availability", "dashboard", "deepseek", "glm", "kimi", "openrouter", "anthropic", "openai", "minimax"],
   "license": "MIT",
   "engines": {
     "node": ">=18"
   },
   "scripts": {
     "start": "node src/server.mjs",
-    "discover": "node src/discover.mjs"
+    "discover": "node src/discover.mjs",
+    "test": "node --test \"tests/**/*.test.mjs\"",
+    "verify": "node scripts/verify-live.mjs"
   }
 }

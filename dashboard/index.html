@@ -46,10 +46,6 @@
     position: relative; overflow: hidden;
   }
   .card::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--line); }
-  .card.ok::before { background: var(--good); }
-  .card.err::before { background: var(--bad); }
-  .card.off::before { background: var(--warn); }
-  .card.unc::before { background: #3a4050; }
 
   .chead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .cname { font-size: 13px; font-weight: 650; }
@@ -57,9 +53,16 @@
     font-size: 10px; letter-spacing: .04em; padding: 2px 7px; border-radius: 999px;
     background: var(--card2); color: var(--muted); border: 1px solid var(--line); white-space: nowrap;
   }
-  .badge.ok { color: var(--good); border-color: rgba(63,182,139,.35); }
-  .badge.err { color: var(--bad); border-color: rgba(224,83,83,.35); }
-  .badge.unc { color: var(--muted); }
+  .badge.good { color: var(--good); border-color: rgba(63,182,139,.35); }
+  .badge.warn { color: var(--warn); border-color: rgba(224,166,62,.35); }
+  .badge.bad { color: var(--bad); border-color: rgba(224,83,83,.35); }
+  .badge.muted { color: var(--muted); }
+
+  /* 按可用度给卡片左侧色条:一眼扫过去就知道哪张要处理 */
+  .card.tone-good::before { background: var(--good); }
+  .card.tone-warn::before { background: var(--warn); }
+  .card.tone-bad::before { background: var(--bad); }
+  .card.tone-muted::before { background: #3a4050; }
 
   .big { display: flex; align-items: baseline; gap: 6px; }
   .big .num { font-size: 27px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
@@ -91,7 +94,19 @@
   .foot input { width: 66px; background: var(--card2); color: var(--ink); border: 1px solid var(--line); border-radius: 5px; padding: 3px 8px; font: inherit; }
   .banner { display: flex; align-items: center; gap: 10px; background: rgba(224,83,83,.12); border: 1px solid var(--bad); color: #ffb3b3; border-radius: 8px; padding: 10px 14px; font-size: 13px; font-weight: 600; margin-top: 12px; }
   .banner[hidden] { display: none; }
+  .banner.soft { background: rgba(224,166,62,.12); border-color: var(--warn); color: #f3d59a; }
   .empty { color: var(--muted); font-size: 13px; padding: 20px 0; }
+
+  /* ── 可接入但未配置 ── */
+  .sugg { margin-top: 16px; padding-top: 11px; border-top: 1px dashed var(--line); }
+  .sugg h2 { font-size: 12px; font-weight: 650; color: var(--muted); letter-spacing: .03em; margin-bottom: 8px; }
+  .sugg ul { list-style: none; display: grid; gap: 6px; font-size: 12px; }
+  .sugg li { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; color: var(--muted); }
+  .sugg li b { color: var(--ink); font-weight: 600; min-width: 104px; }
+  .sugg code { background: var(--card2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font: 11px ui-monospace, Consolas, monospace; color: var(--ink); }
+  .sugg .tag { font-size: 10px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line); }
+  .sugg .tag.has { color: var(--good); border-color: rgba(63,182,139,.35); }
+  .sugg .tag.probe { color: var(--accent); border-color: rgba(79,140,255,.35); }
 </style>
 </head>
 <body>
@@ -110,11 +125,10 @@
   <div class="summary" id="summary"></div>
   <div class="banner" id="banner" hidden></div>
   <div class="grid" id="grid"></div>
+  <div class="sugg" id="sugg" hidden></div>
 
   <div class="foot">
-    <span>低余额告警阈值:</span>
-    <input id="thr" type="text" inputmode="decimal" placeholder="10">
-    <button id="thrSave" type="button">保存</button>
+    <span>低余额阈值由聚合服务判定:<code>API_USAGE_LOW_THRESHOLD=10</code> 或 <code>CNY:10</code>(按币种)</span>
     <span id="debugState"></span>
   </div>
 </div>
@@ -123,22 +137,12 @@
 /* 数据源:本机聚合服务(只监听环回地址,不回传任何 key) */
 const ENDPOINT = "http://127.0.0.1:9993/balances";
 const REFRESH_MS = 60000;
-const THR_KEY = "apiUsageAlertThr";
 
 const $ = (id) => document.getElementById(id);
 const fmtNum = (n, d = 2) =>
   n === null || n === undefined || n === "" || !Number.isFinite(Number(n)) ? "—" : Number(n).toFixed(d);
 const symOf = (cur) => ({ CNY: "¥", USD: "$", EUR: "€", JPY: "¥" }[cur] || (cur ? cur + " " : ""));
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-
-/* 阈值:localStorage 优先,失败退回内存(file:// 下可能禁用 storage) */
-let memThr = 10;
-const store = {
-  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
-  set(k, v) { try { localStorage.setItem(k, v); } catch { /* ignore */ } }
-};
-
-const KIND_LABEL = { balance: "余额", quota: "额度", endpoint: "端点", unsupported: "不支持" };
 
 function barClass(ratio) { return ratio >= 0.9 ? "bad" : ratio >= 0.7 ? "warn" : "ok"; }
 
@@ -154,31 +158,30 @@ function cardHtml(p) {
     p.balance === null || p.balance === undefined || !Number.isFinite(Number(p.balance)) ? null : Number(p.balance);
   const sym = symOf(p.currency);
 
-  // 状态类:ok / err / off(端点离线) / unc(未配置)
-  let cls = "ok";
-  if (p.status === "error") cls = "err";
-  else if (p.status === "unconfigured") cls = "unc";
-  else if (p.kind === "endpoint" && p.online === false) cls = "off";
+  // 卡片色调由**可用度**决定(不是旧的 status):这才是"现在能不能用"的答案
+  const tone = p.availability_tone || "muted";
+  const availLabel = p.availability_label || "未知";
 
+  // 角标:端点类显示在线/离线,其余显示可用度
   const badge = p.kind === "endpoint"
-    ? `<span class="badge ${p.online ? "ok" : "err"}">${p.online ? "在线" : "离线"}</span>`
-    : `<span class="badge">${KIND_LABEL[p.kind] || p.kind}</span>`;
+    ? `<span class="badge ${p.online ? "good" : "muted"}">${p.online ? "在线" : "离线"}</span>`
+    : `<span class="badge ${tone}" title="${esc(p.availability_hint || "")}">${esc(availLabel)}</span>`;
 
   // 主数字区
   let big;
-  if (p.status === "unconfigured") {
+  if (p.availability === "unconfigured") {
     big = `<div class="big na"><span class="num">未配置 API Key</span></div>`;
-  } else if (p.unsupported) {
-    big = `<div class="big na"><span class="num">需到控制台查看</span></div>`;
   } else if (bal !== null) {
     big = `<div class="big"><span class="num">${sym}${fmtNum(bal)}</span><span class="cur">${esc(p.currency || "")}</span><span class="lbl">${esc(p.balance_label || "")}</span></div>`;
   } else if (p.kind === "endpoint") {
     big = `<div class="big na"><span class="num">${p.online ? "服务运行中" : "服务未启动"}</span></div>`;
+  } else if (p.unsupported) {
+    // 没有余额接口,但可用度仍然是有意义的答案 —— 大字直接说结论
+    big = `<div class="big na"><span class="num">${esc(availLabel)}</span><span class="lbl">无余额接口,仅探测可用性</span></div>`;
   } else {
-    big = `<div class="big na"><span class="num">暂无数据</span></div>`;
+    big = `<div class="big na"><span class="num">${esc(availLabel)}</span></div>`;
   }
 
-  // 端点类卡片的主状态已在数字区展示,明细里去掉重复的"状态"行
   const detailRows = (p.details || []).filter((d) => !(p.kind === "endpoint" && d.label === "状态"));
   const rows = detailRows.length
     ? `<div class="rows">${detailRows.map((d) => `<div class="row"><span class="k">${esc(d.label)}</span><span class="v">${esc(d.value)}</span></div>`).join("")}</div>`
@@ -196,20 +199,22 @@ function cardHtml(p) {
       }).join("")}</div>`
     : "";
 
-  // 底部提示
+  // 底部提示:错误优先于一切 —— 出错原因必须看得见
   let foot = "";
-  if (p.status === "unconfigured") {
+  if (p.error) {
+    foot = `<div class="errmsg">${esc(p.error)}</div>`;
+  } else if (p.availability === "unconfigured") {
     const kn = p.key_source || "对应的 API Key";
     foot = `<div class="hint">把 <code>${esc(kn)}</code> 写进 Hermes 的 .env 即可点亮。${p.homepage ? ` <a href="${esc(p.homepage)}" target="_blank">去申请 →</a>` : ""}</div>`;
-  } else if (p.status === "error") {
-    foot = `<div class="errmsg">${esc(p.error || "查询失败")}</div>`;
-  } else if (p.unsupported) {
-    foot = `<div class="hint"><a href="${esc(p.homepage)}" target="_blank">打开控制台查看 →</a></div>`;
   } else if (p.note) {
     foot = `<div class="note">${esc(p.note)}</div>`;
   }
+  // 没有余额接口时,额外给一个去控制台的出口
+  if (!p.error && p.unsupported && p.homepage) {
+    foot += `<div class="hint"><a href="${esc(p.homepage)}" target="_blank">打开控制台查看余额 →</a></div>`;
+  }
 
-  return `<div class="card ${cls}">
+  return `<div class="card tone-${tone}">
     <div class="chead"><span class="cname">${esc(p.label)}</span>${badge}</div>
     ${big}${rows}${bars}${foot}
   </div>`;
@@ -218,35 +223,74 @@ function cardHtml(p) {
 /* ── 渲染整页 ───────────────────────────────────────────── */
 function render(data) {
   const ps = data.providers || [];
-  $("sub").textContent = `自动发现 ${data.count} 项服务 · 其中 ${data.configured_count} 项已配置`;
+  $("sub").textContent = data.probing_enabled === false
+    ? `自动发现 ${data.count} 项服务 · 可用性探测已关闭(API_USAGE_PROBE=0)`
+    : `自动发现 ${data.count} 项服务 · 其中 ${data.configured_count} 项已配置 · ${data.ok_count} 项可用`;
+
   $("grid").innerHTML = ps.length
     ? ps.map(cardHtml).join("")
     : `<div class="empty">没有发现任何模型服务。检查 Hermes 的 config.yaml / .env 是否配置了 provider。</div>`;
 
-  const okN = ps.filter((p) => p.status === "ok").length;
-  const errN = ps.filter((p) => p.status === "error").length;
-  const uncN = ps.filter((p) => p.status === "unconfigured").length;
+  // 概览:按可用度分类统计,而不是旧的 status
+  const byAvail = (id) => ps.filter((p) => p.availability === id).length;
+  const attention = ps.filter((p) =>
+    ["invalid_key", "exhausted", "rate_limited", "low"].includes(p.availability)
+  );
+  const muted = byAvail("unconfigured");
   $("summary").innerHTML = [
     `总计 <b>${ps.length}</b>`,
-    `正常 <b>${okN}</b>`,
-    errN ? `异常 <b>${errN}</b>` : null,
-    uncN ? `未配置 <b>${uncN}</b>` : null
+    `可用 <b>${byAvail("ok")}</b>`,
+    muted ? `未配置 <b>${muted}</b>` : null,
+    attention.length ? `需处理 <b>${attention.length}</b>` : null
   ].filter(Boolean).map((s) => `<span>${s}</span>`).join("");
 
-  // 低余额告警(只针对有明确余额的卡)
-  const thrRaw = store.get(THR_KEY) ?? memThr;
-  const thr = Number(thrRaw);
-  const low = ps.filter(
-    (p) =>
-      p.balance !== null && p.balance !== undefined && Number.isFinite(Number(p.balance)) && thr > 0 && Number(p.balance) < thr
-  );
+  // 告警横幅:余额低 / key 失效 / 欠费 / 被限流 —— 这四类才真的需要动作
+  const low = ps.filter((p) => p.availability === "low");
+  const dead = ps.filter((p) => ["invalid_key", "exhausted", "rate_limited"].includes(p.availability));
   const banner = $("banner");
+  const parts = [];
+  if (dead.length) {
+    parts.push(dead.map((p) => `${p.label} ${p.availability_label}`).join(" / "));
+  }
   if (low.length) {
+    parts.push(
+      `${low.map((p) => `${p.label} ${symOf(p.currency)}${fmtNum(p.balance)}`).join(" / ")} 已低于所设阈值`
+    );
+  }
+  if (parts.length) {
     banner.hidden = false;
-    banner.textContent = `⚠️ ${low.map((p) => `${p.label} ${symOf(p.currency)}${fmtNum(p.balance)}`).join(" / ")} 已低于阈值 ${symOf(low[0].currency)}${thr}`;
-  } else banner.hidden = true;
+    banner.className = "banner" + (dead.length ? "" : " soft");
+    banner.textContent = (dead.length ? "⚠️ " : "🟡 ") + parts.join(" · ");
+  } else {
+    banner.hidden = true;
+  }
 
-  $("debugState").textContent = `thr=${thr} · 数据 ${fmtClock(data.generated_at)}${data.cached ? " (缓存)" : ""}`;
+  // 可接入但本机未配置 —— 纯信息,让"支持什么"不被"没配 key"藏起来
+  const sugg = data.suggestions || [];
+  const box = $("sugg");
+  if (sugg.length) {
+    box.hidden = false;
+    box.innerHTML =
+      `<h2>可接入(本机尚未配置)</h2><ul>` +
+      sugg
+        .map(
+          (g) =>
+            `<li><b>${esc(g.label)}</b>` +
+            `<code>${esc(g.key_env || "")}</code>` +
+            (g.has_balance_api
+              ? `<span class="tag has">可查余额</span>`
+              : `<span class="tag probe">仅可用性</span>`) +
+            (g.homepage ? `<a href="${esc(g.homepage)}" target="_blank">控制台 →</a>` : "") +
+            `</li>`
+        )
+        .join("") +
+      `</ul>`;
+  } else {
+    box.hidden = true;
+  }
+
+  const cacheNote = data.probe_cache_size ? ` · 探测缓存 ${data.probe_cache_size}` : "";
+  $("debugState").textContent = `数据 ${fmtClock(data.generated_at)}${cacheNote}`;
 }
 
 /* ── 拉取 ───────────────────────────────────────────────── */
@@ -273,18 +317,8 @@ async function tick(manual) {
   }
 }
 
-/* 阈值控件 */
-(function initThr() {
-  const input = $("thr");
-  const stored = store.get(THR_KEY) ?? memThr;
-  input.value = stored ?? "10";
-  const apply = () => {
-    const v = parseFloat(input.value);
-    if (Number.isFinite(v) && v > 0) { memThr = v; store.set(THR_KEY, String(v)); tick(false); }
-  };
-  $("thrSave").onclick = apply;
-  input.addEventListener("input", apply);
-})();
+/* 阈值相关控件已移除:阈值改由聚合服务判定(设计文档 §10.5 —— 配置属于注册表,
+   不属于前端)。前端不再自行比较余额,一切以服务端给出的 availability 为准。 */
 
 $("refreshBtn").onclick = () => tick(true);
 tick(false);

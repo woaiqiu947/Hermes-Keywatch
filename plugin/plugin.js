@@ -8,8 +8,9 @@
  * 仪表盘页面本身**不含任何 key** —— 它只读环回地址上的聚合结果。
  *
  * 安装位置:<HERMES_HOME>/desktop-plugins/cc-usage/
- *   文件夹名 == 插件 id,这里沿用历史的 "cc-usage" 以免桌面端需要重启重扫;
- *   功能已升级为多厂商总览。
+ *   文件夹名 == 插件 id。这里**沿用历史的 "cc-usage"**,因为改文件夹名等于换一个
+ *   插件 id,需要重启桌面端重新扫描才能生效(否则侧边栏入口会消失)。
+ *   项目/仓库名是 hermes-keywatch,插件 id 保留 cc-usage 只是为了避免这个重启。
  */
 import { host, PALETTE_AREA, ROUTES_AREA, SIDEBAR_NAV_AREA } from '@hermes/plugin-sdk'
 import { jsx } from 'react/jsx-runtime'

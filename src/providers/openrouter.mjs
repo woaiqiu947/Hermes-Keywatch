@@ -22,6 +22,14 @@ export default {
     return this.keyNames.includes(endpoint.keyEnv)
   },
 
+  /** 付费探测(兜底用)。`openrouter/auto` 是官方的自动路由模型,名字较稳。 */
+  probe: {
+    path: '/chat/completions',
+    body: { model: 'openrouter/auto', max_tokens: 1, messages: [{ role: 'user', content: '.' }] },
+    cost: 'token',
+    verified: false
+  },
+
   async query({ key, baseUrl, fetchJson }) {
     if (!key) return { ok: false, reason: 'unconfigured' }
     const r = await fetchJson(this.balanceUrl(baseUrl), {

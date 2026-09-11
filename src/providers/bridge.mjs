@@ -18,6 +18,21 @@ export default {
   keyNames: [],
   /** bridge 的 admin 端点只对本机开放,不需要凭据 */
   needsKey: false,
+  /**
+   * admin 端点无需鉴权 —— 它返回 200 只说明"bridge 活着",**不能**证明
+   * CommandCode 的 key 可用。所以可用度交给 probe(免费 GET /models)。
+   */
+  balanceProvesKey: false,
+  /**
+   * 免费且带鉴权的探测端点:实测带 key → 200,不带 key → 401。
+   * 所以它既能证明 bridge 活着,又能证明 bridge 的 key 有效,且**零 token 消耗**。
+   */
+  probe: {
+    path: '/models',
+    method: 'GET',
+    cost: 'free',
+    verified: true
+  },
   /** bridge 的默认 admin 地址;端口可从 /v1 的 base_url 推 */
   adminUrl: (baseUrl) => {
     try {

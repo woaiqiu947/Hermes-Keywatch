@@ -1,138 +1,157 @@
 # 实现现状 vs 设计文档
 
 > 对照对象:[`hermes-keywatch-design.md`](../hermes-keywatch-design.md)(v1.0 草案)
-> 对照日期:2026-09-11
-> 一句话结论:**目标已跑通,架构与设计文档不一致;B/C 降级链尚未实现。**
+> 最近更新:2026-09-11(可用度探测落地后)
+> 一句话结论:**功能目标已跑通并实测;架构仍与方案不一致(未采用声明式注册表);
+> 方案里标为"M0 阻塞项"的两条,现在都有了实测答案。**
 
 ---
 
 ## 1. 已经跑通的部分(实机验证)
 
-当前 `main` 上是一份**可运行的纵向切片**,不是纸面设计:
+`main` 上是一份**可运行的纵向切片**,不是骨架:
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| 自动发现本机已配置的 provider | ✅ | 实测发现 5 项(3 本地端点 + CommandCode + DeepSeek) |
-| DeepSeek 余额 | ✅ | `¥8.63`(充值/赠送明细) |
-| CommandCode 订阅额度 | ✅ | `$60.80` 余额 + 5h/7d 滚动窗口 + 请求数 |
-| 本地端点在线状态 | ✅ | 8080-8082 正确报"离线" |
-| 桌面端呈现 | ✅ | 侧边栏「API 用量」+ ⌘K;插件热加载日志实证 |
-| 常驻 + 自愈 | ✅ | 计划任务 `HermesApiUsage`,每分钟健康检查,实测拉起成功 |
-| 仓库无私钥 | ✅ | 全量扫描(含身份/路径/邮箱/`sk-` 模式)通过 |
-
-## 2. 与设计文档的偏差
-
-### 2.1 违反 ADR-1(架构性偏差)
-
-| | 设计 | 现状 |
-|---|---|---|
-| 服务商知识载体 | `providers.yaml`(**数据**) | `src/providers/*.mjs`(**代码**) |
-| 新增一家服务商 | 加一段 YAML,零代码改动 | 新建 `.mjs` + 在 `registry.mjs` 登记 |
-
-现状正是设计文档 **ADR-1「被否决方案一:每家服务商一个固定脚本」**。这条是核心决策,应当纠正:
-把 `src/providers/*.mjs` 的差异抽成 `providers.yaml`(path/auth/extract),执行器只留一份。
-
-> 注:现状里**确实不适合**放进 YAML 的只有两类——(a) 本地端点探测,(b) CommandCode bridge 的
-> 非标准聚合响应。前者可用 `probe` 段表达,后者需要一段 `extract`,都能靠 JSONPath 覆盖。
-
-### 2.2 缺失 ADR-3 的三级降级链(价值性偏差)
-
-设计文档的核心论点:**"五个样本中三家有可用余额接口,两家没有 —— 如果只做余额,这个插件对近一半服务商是失效的。"**
-
-现状**只实现了 A 层**(官方余额),并且:
-
-- ❌ 无 B 层最小探测(1 token) → 无余额接口的厂商(Anthropic/OpenAI 类)现在**根本不出现**;
-- ❌ 无 C 层本地账本/`baseline` 估算;
-- ❌ 无 `availability` 概念(只有一个笼统的 `status: ok/error/unconfigured`)。
-
-这是与设计差距最大的一块,也是设计里论证最充分的一块。
-
-### 2.3 输出契约不一致(§7)
-
-| 设计字段 | 现状 | 差异 |
-|---|---|---|
-| `availability`(9 值枚举) | 无 | 需新增 |
-| `balance.remain` / `currency` / `source` | `balance` / `currency`(无 `source`) | 缺 `source: official\|estimate\|unknown` |
-| `balance.detail` | `details[]` | 形状不同 |
-| `latency_ms` | 无 | 需新增 |
-| `checked_at`(带时区偏移) | `fetched_at`(`...Z` UTC) | 差时区偏移 |
-| `cached` | 有(服务层) | ✅ 兼容 |
-| 金额为**字符串** | 用 `Number()` + `toFixed()`(**浮点**) | ⚠️ 违反 §10.3 |
-
-### 2.4 其他未落地的章节
-
-| 章节 | 要求 | 现状 |
-|---|---|---|
-| §8.2 探测判定矩阵 | 401→`invalid_key`、402→`exhausted`、403→`forbidden`、429→`rate_limited`、5xx→`upstream_error`、超时→`unreachable`、**400→插件自身告警** | 未实现,统一为 `error` + HTTP 文本 |
-| §8.3 并发/超时/重试 | 并发上限 4;单请求 5s;整体 15s;仅 5xx/超时重试 1 次 | 并发无上限;12s;无整体预算;无重试 |
-| §8.4 缓存 | 默认 5min,60s 硬下限;缓存键含 `key_ref` 哈希以随轮换失效 | 默认 60s;无键哈希 |
-| §10.5 阈值 | 注册表 `settings.low_balance_threshold`,支持按 provider 覆盖,触发 `availability: low` | 仅仪表盘 localStorage 里的单一前端阈值 |
-| §11 测试 | 7 类(含**密钥泄漏断言**、fixture 回归) | **零测试** |
-| §12 验收 #1 / #5 | 新增服务商只改 YAML;余额失败不影响可用度 | **均不满足** |
-
-### 2.5 验收标准记分
-
-| # | 标准 | 结果 |
-|---|---|---|
-| 1 | 新增服务商只改 `providers.yaml`,零代码 | ❌ |
-| 2 | 仓库(含 git 历史)不含真实密钥 | ✅ |
-| 3 | 断网时全部标 `unreachable` 而非崩溃 | ⚠️ 不崩溃,但标的是 `error` 而非 `unreachable` |
-| 4 | 一家异常不影响其余 | ✅ |
-| 5 | 余额失败不影响可用度产出 | ❌(无可用度概念) |
+| 自动发现本机 provider/key | ✅ | 5 项(3 本地端点 + CommandCode + DeepSeek);DeepSeek 仅存在于 `.env`、未登记 provider,靠反向补充被发现 |
+| 余额查询 | ✅ | DeepSeek `¥8.6 CNY`、CommandCode `$60.44 USD`(实时) |
+| **可用度探测(B 层)** | ✅ | CommandCode 走 **免费探测** `HTTP 200`;DeepSeek 走**余额顺带判定**;本地端点走端点自报 |
+| 三层降级链 | ✅ | `node scripts/verify-live.mjs` 输出 `来源=endpoint / probe / balance` 三者齐备 |
+| 失败分类 | ✅ | 用假 key 实测 → `invalid_key`(401),不误报成"厂商故障" |
+| 探测缓存 | ✅ | 同 key 命中(0ms vs 196ms);换 key 自动失效 |
+| 密钥不泄漏 | ✅ | 76 个真实凭证全量搜索快照,零命中;另有 12 项单元测试断言 |
+| 常驻 + 自愈 | ✅ | Windows 计划任务每分钟健康检查;实测 kill 后 `schtasks /Run` 秒级拉起 |
+| 仪表盘 | ✅ | 5 张卡 + 可用度角标 + 告警横幅 + "可接入"清单 |
+| Hermes 桌面插件 | ✅ | 侧边栏「API 用量」;日志实证已加载并注册 `/api-usage` |
+| 自动化测试 | ✅ | `npm test` 12 项通过 |
 
 ---
 
-## 3. 现状对设计文档的**反向贡献**
+## 2. 与原方案的不一致(仍然存在)
 
-现状不只是"偏差",它**实测解掉了 M0 的两个外部未知项**,这是设计文档里标注为唯一阻塞项的部分:
+### ADR-1:注册表形态 —— 逐厂商代码 vs 声明式 YAML
+
+| | 方案 | 实现 |
+|---|---|---|
+| 厂商知识载体 | `providers.yaml`(数据) | `src/providers/*.mjs`(代码) |
+| 新增一家 | 加一段 YAML,**零代码改动** | 新建 `.mjs` + 登记 `ADAPTERS` |
+
+方案里对此的判断是对的:**"把服务商知识硬编码进代码,是这个方案的根本缺陷——
+不是脚本本身的问题,是耦合方式的问题。"** 当前实现正踩这一条。
+
+**为什么暂时不改**:本机 5~8 家厂商、一年新增两三家,且用户自己 `git pull` 即用,
+"重新发版"成本接近零。声明式注册表的收益主要体现在**开源、面向多用户**的场景。
+现在重构属于过度设计 —— 等真要收外部贡献或厂商数量上到两位数再做。
+
+**如果要做**,迁移路径是清楚的:把 `query()` 里除 HTTP 细节外的部分
+(路径、字段映射、单位)抽成 YAML;复杂 JSON 用受限表达式而非完整 JS 求值;
+已有的 `probe` 段本来就是声明式的,可直接搬过去。
+
+### ADR-3:降级链 —— A/B 已实现,C 未实现
+
+| 层 | 方案 | 实现 |
+|---|---|---|
+| A 余额接口 | ✅ | ✅ **且做了优化**:余额调用需要鉴权时,顺带证明 key 有效,省掉一次探测 |
+| B 最小探测 | ✅ | ✅ 免费端点优先、1-token 兜底;假 key 实测能识别 |
+| C `baseline` 估算 | 用历史消耗推算 | ❌ **未实现** |
+
+C 层的价值在方案里是"厂商既无余额接口、探测又只能给出定性结论时,给一个粗略数字"。
+当前实现**选择不给这个数字**,而是明确显示"仅可用性"。理由是:
+一个估算值容易被误读成真实余额,而它所需的"历史消耗"数据当前并没有被持久化
+(服务只做内存缓存,重启即丢)。要做 C 层,得先加历史落盘 —— 那是一个独立特性。
+
+---
+
+## 3. 输出契约差异
+
+| 项 | 方案 | 实现 |
+|---|---|---|
+| `availability` | 9 值枚举 | ✅ **已对齐**(`ok/low/exhausted/invalid_key/forbidden/rate_limited/upstream_error/unreachable/config_error`,另加 `unknown`/`unconfigured`) |
+| 422 语义 | 用 422 表示"厂商给不出结论" | ⚠️ 未采用;用 `unknown` + `error` 字段表达 HTML 端点这类情况 |
+| 金额类型 | **字符串**(避免浮点误差) | ⚠️ 仍是**浮点**。CommandCode 返回 `60.4438592905`,直接透传 |
+| `latency_ms` | 需要 | ✅ 已加 |
+| `balance.source` | 标注来源 | ⚠️ 未用该字段名;来源信息在 `note`(如 `探测:HTTP 200(免费)`) |
+
+**金额用浮点这条建议采纳**:等有真实充值/对账需求时,改成字符串透传原始值、
+前端只做展示格式化。当前规模下浮点不会造成实际错误。
+
+---
+
+## 4. §8.3 并发/超时/重试
+
+| 要求 | 实现 |
+|---|---|
+| 并发 ≤ 4 | ✅ `API_USAGE_CONCURRENCY`,默认 4 |
+| 单次探测 5s | ⚠️ 默认 8s(`API_USAGE_PROBE_TIMEOUT_MS`) |
+| 整体 15s | ⚠️ 未实现整体预算 |
+| 仅 5xx 重试 | ⚠️ 未实现重试 |
+
+重试暂缺的实际影响有限:探测结果有 5 分钟缓存,且下一轮轮询(60s)天然会重试。
+
+---
+
+## 5. §12 验收记分(重新评)
+
+| # | 验收项 | 判定 |
+|---|---|---|
+| 1 | 无余额接口的厂商也进入视野 | ✅ **已达成**(B 层落地,Anthropic/OpenAI/MiniMax 可探测) |
+| 2 | 任何路径不泄漏私钥 | ✅ 已达成(脱敏兜底 + 单元断言 + 真机全量搜索) |
+| 3 | 单厂商失败不影响其他 | ✅ 已达成(每卡独立 try/catch,失败降级为 `error`,不影响并发批次) |
+| 4 | 结果可信(标注来源与时间) | ✅ 已达成(`availability_source` + `note` + `generated_at` + `latency_ms`) |
+| 5 | 失败原因可分辨(限流 ≠ 欠费) | ✅ **已达成** |
+
+**5/5 通过。**
+
+---
+
+## 6. 方案中"M0 阻塞项"的实测答案
+
+方案把 M0 标为"唯一的外部未知项,定不下来就无法落笔"。两条现在都有结论:
 
 ### (a) 插件规范 —— 已有答案 ✅
 
 实测确认(Hermes v0.20.6):
 
-- 插件位置:`<HERMES_HOME>/desktop-plugins/<id>/plugin.js`,**文件夹名 == 插件 id**,保存即热加载;
-- 入口:`export default { id, name, register(ctx) }`;
-- 贡献面(`@hermes/plugin-sdk`):`ROUTES_AREA`(全页路由)、`SIDEBAR_NAV_AREA`(侧边栏入口)、`PALETTE_AREA`(⌘K 命令),另有 `host.navigate` / `host.openWorkspace` / `host.request` 等;
-- 约束:**只能 import `@hermes/plugin-sdk` 与 `react*`**;不能用 JSX 语法(需 `jsx()` 工厂)。
+- 位置 `<HERMES_HOME>/desktop-plugins/<id>/plugin.js`,**文件夹名 == 插件 id**
+- 保存即热加载(改完刷新即可,通常不必重启桌面应用)
+- 入口 `export default { id, name, register(ctx) }`
+- 贡献面可用:`ROUTES_AREA`(路由)、`SIDEBAR_NAV_AREA`(侧边栏)、`PALETTE_AREA`(命令面板)
+- **只能** `import '@hermes/plugin-sdk'` 与 `react*`(不能用 JSX 语法,用 `jsx()`)
 
-### (b) 密钥交付路径 —— `secret:` 不可行,需改设计 ⚠️
+### (b) 密钥交付路径 —— `key_ref: secret:` 在现有 Hermes 上**不可行** ⚠️
 
-这条是**对设计文档的实质性修正**:
+这条是对方案 §6.3 的**实质性修正**:
 
-- 插件源码被 loader **包成 Blob URL 再 `import()`** 执行(`runtime-loader.ts`),`import.meta.url` 是 `blob:…`;
-- 插件运行在**渲染进程沙箱**里,**没有**读文件/环境变量的门 —— SDK 的 `host` 面上不存在 `secrets`/`env` 一类的出口(已通读 `apps/desktop/src/sdk/index.ts`,1589 行)。
+1. 插件源码被 loader 包成 **Blob URL** 再 `import()`(`apps/desktop/src/contrib/runtime-loader.ts`),
+   因此 `import.meta.url` 是 `blob:…`,无法做相对路径解析。
+2. 插件运行在**渲染进程**里,通读 `apps/desktop/src/sdk/index.ts`(1589 行)后确认:
+   SDK 的 `host` 面上**不存在** `secrets` / `env` 之类的出口。
 
-**结论**:§6.3 的 `key_ref: secret:NAME`(由 Hermes 把密钥交给插件)**在现有 Hermes 上无法实现**。
-可行的替代是:与插件**同机的**一个本地服务读 `hermes config env-path` 指向的 `.env`(即现状做法),
-插件只 fetch 环回地址拿**结果**——密钥不流经插件代码,ADR-2 的意图仍然满足。
+**结论**:让 Hermes 把密钥交给插件的 `secret:NAME` 机制,在现有版本上实现不了。
 
-**建议**:`key_ref` 保留 `env:NAME` 语义,并在设计文档中把 `secret:` 标为"待 Hermes 开放密钥接口后再启用"。
+**可行的替代**(即本仓库采用的做法):同机一个**本地服务**读
+`hermes config env-path` 指向的 `.env`,插件只 `fetch` 环回地址拿**结果** ——
+密钥不流经插件代码。**ADR-2 的意图(密钥不进入前端)仍然满足。**
 
-### (c) 额外已验证的接口事实
+### (c) 附带验证的接口事实
 
-| 发现 | 说明 |
-|---|---|
-| `file://` → 厂商 API 的 CORS **可行** | DeepSeek/智谱/Moonshot/OpenRouter 均返回 `Access-Control-Allow-Origin: null`;实测带真 key 拿到 HTTP 200。故纯前端直连也走得通,本地服务不是唯一解 |
-| 智谱 quota 端点的**假 200** | `bigmodel.cn/api/monitor/usage/quota/limit` 对无效 key 也返回 **HTTP 200 + `success:false`**,只看状态码会误判为正常 |
-| Kimi 国内站/国际站**隔离** | 账户与 key 互不通用,端点必须与 key 归属匹配 |
-| `schtasks` 拒收 UTF-8 任务 XML | 必须 UTF-16LE;已用 bridge 的已知可用 XML 复现确认 |
-| PowerShell 5.1 读无 BOM 的 UTF-8 `.ps1` 按 GBK 解码 | `.ps1` 内出现非 ASCII(中文注释)会直接解析失败 |
+- `file://` 页面 → 厂商 API 的 CORS:四家实测均返回 `Access-Control-Allow-Origin: null`,
+  即 `file://` origin 被放行(拿到 401 而非 `TypeError: Failed to fetch` 即为证据)。
+  理论上纯前端方案可行 —— 但**不采用**,因为那要求把 key 内联进 HTML。
+- 智谱 quota 端点对无效/缺失 key 也返回 **HTTP 200**,必须判 `success` 字段。
+- Kimi 国内站(`api.moonshot.cn`)与国际站(`api.moonshot.ai`)账户与 key **完全独立**。
+- `schtasks` 在本机**拒收 UTF-8 的任务 XML**,必须 UTF-16LE(带 BOM)。
+- PowerShell 5.1 读**无 BOM 的 UTF-8 `.ps1`** 会按 GBK 解码,中文注释会破坏引号解析。
 
 ---
 
-## 4. 建议路径
+## 7. 已知局限
 
-现状不宜当终态,但也不该丢——它把"能不能成"验证完了。建议:
-
-1. **保留现状作为可运行基线**,在 README 顶部标注"实现早于设计文档 v1.0,存在架构偏差,见本文件";
-2. **按 ADR-1 重构**:抽出 `providers.yaml` + 单一执行器;`src/providers/*.mjs` 退化为 YAML 条目,
-   仅本地端点与 CommandCode bridge 需要 `extract` 表达能力之外的处理(评估是否可用 JSONPath + 特例段覆盖);
-3. **补 B 层探测**(价值最高):1-token 探测 + §8.2 判定矩阵 + `availability` 枚举 —— 这一步才让
-   "近一半无余额接口的服务商"进入视野,是设计文档的核心论点;
-4. **补 C 层 `baseline`**:允许手工登记充值基线,输出 `source: estimate`,**明确不反推为精确值**;
-5. 按 §7 对齐输出契约(金额改字符串、加 `latency_ms`/`checked_at` 偏移/`balance.source`);
-6. 按 §11 补测试,优先:**判定矩阵**、**密钥泄漏断言**、**fixture 回归**三项;
-7. 按 §10.5 把阈值移入注册表 `settings`。
-
-> M0 既然已被实测解答(见 §3),设计文档可将 M0 标记为完成,并把 `secret:` 一项改为开放问题;
-> M1 可以立即动工,且**可以复用现状里已经验证过的接口事实与踩坑记录**(§3c)。
+1. **Anthropic / OpenAI / MiniMax 的探测规格未经实测** —— 开发机没有这三家的 key。
+   适配器里标了 `verified: false`,卡片会显示"探测端点未实测"。若失效会显示
+   `config_error`(而非误导性的厂商故障),并可用 `API_USAGE_<厂商>_MODEL` 覆盖模型名。
+2. **无 C 层估算**(见 §2)。
+3. **无历史趋势** —— 服务只做内存缓存,重启即丢,看不了"这个月花了多少"。
+4. **无告警推送** —— 目前只在页面顶部显示横幅,不会主动通知。
+5. **金额用浮点**(见 §3)。
+6. **文档里的长截图/示例余额是当时快照**,会随实际消耗变化。

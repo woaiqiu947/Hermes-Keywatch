@@ -32,6 +32,18 @@ export default {
     return this.keyNames.includes(endpoint.keyEnv)
   },
 
+  /**
+   * 付费探测(仅在余额接口失败时作为兜底)。
+   * ⚠️ 模型名未实测(本机无智谱官方 key)—— 若名字不对会返回 400,
+   * 而 400 被归类为 config_error(本插件配置问题),不会伪装成厂商故障。
+   */
+  probe: {
+    path: '/chat/completions',
+    body: { model: 'glm-4-flash', max_tokens: 1, messages: [{ role: 'user', content: '.' }] },
+    cost: 'token',
+    verified: false
+  },
+
   async query({ key, fetchJson }) {
     if (!key) return { ok: false, reason: 'unconfigured' }
 
