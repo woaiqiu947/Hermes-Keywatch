@@ -1,0 +1,16 @@
+{
+  "name": "hermes-api-usage",
+  "version": "1.0.0",
+  "type": "module",
+  "private": false,
+  "description": "Multi-provider API balance & usage dashboard for Hermes Desktop — auto-discovers every provider/key configured on the machine.",
+  "keywords": ["hermes", "hermes-agent", "balance", "usage", "dashboard", "deepseek", "glm", "kimi", "openrouter"],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "discover": "node src/discover.mjs"
+  }
+}

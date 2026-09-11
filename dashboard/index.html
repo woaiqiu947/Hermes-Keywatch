@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API 余额与用量</title>
+<style>
+  :root {
+    --bg: #0f1115; --card: #171a21; --card2: #1d212b;
+    --ink: #e8eaf0; --muted: #8b93a7; --line: #2a2f3a;
+    --good: #3fb68b; --warn: #e0a63e; --bad: #e05353; --accent: #4f8cff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 14px/1.45 -apple-system, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif;
+    padding: 14px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+
+  /* ── 顶部 ── */
+  .topline { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  h1 { font-size: 16px; letter-spacing: .02em; font-weight: 650; }
+  .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .updated { font: 11px ui-monospace, Consolas, monospace; color: var(--muted); }
+  button {
+    background: var(--card2); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 6px; padding: 4px 11px; font-size: 11px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); margin-right: 4px; vertical-align: middle; }
+  .dot.ok { background: var(--good); } .dot.err { background: var(--bad); } .dot.load { background: var(--warn); }
+
+  /* ── 概览 ── */
+  .summary { display: flex; gap: 8px 20px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin: 12px 0 4px; }
+  .summary b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+  /* ── 卡片网格 ── */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 11px; margin-top: 12px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 9px;
+    padding: 13px; display: flex; flex-direction: column; gap: 9px;
+    position: relative; overflow: hidden;
+  }
+  .card::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--line); }
+  .card.ok::before { background: var(--good); }
+  .card.err::before { background: var(--bad); }
+  .card.off::before { background: var(--warn); }
+  .card.unc::before { background: #3a4050; }
+
+  .chead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .cname { font-size: 13px; font-weight: 650; }
+  .badge {
+    font-size: 10px; letter-spacing: .04em; padding: 2px 7px; border-radius: 999px;
+    background: var(--card2); color: var(--muted); border: 1px solid var(--line); white-space: nowrap;
+  }
+  .badge.ok { color: var(--good); border-color: rgba(63,182,139,.35); }
+  .badge.err { color: var(--bad); border-color: rgba(224,83,83,.35); }
+  .badge.unc { color: var(--muted); }
+
+  .big { display: flex; align-items: baseline; gap: 6px; }
+  .big .num { font-size: 27px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+  .big .cur { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .big .lbl { font-size: 11px; color: var(--muted); }
+  .big.na .num { font-size: 17px; color: var(--muted); font-weight: 600; }
+
+  .rows { display: grid; gap: 3px; font-size: 12px; }
+  .row { display: flex; justify-content: space-between; gap: 10px; }
+  .row .k { color: var(--muted); }
+  .row .v { font-variant-numeric: tabular-nums; text-align: right; }
+
+  .bars { display: grid; gap: 8px; }
+  .bar .top { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-bottom: 3px; gap: 8px; }
+  .bar .top b { color: var(--ink); font-weight: 600; }
+  .track { height: 7px; background: var(--card2); border-radius: 4px; overflow: hidden; }
+  .fill { height: 100%; border-radius: 4px; background: var(--accent); width: 0; transition: width .5s ease; }
+  .fill.ok { background: var(--good); } .fill.warn { background: var(--warn); } .fill.bad { background: var(--bad); }
+
+  .note { font-size: 11px; color: var(--muted); }
+  .errmsg { font-size: 11px; color: var(--bad); word-break: break-word; }
+  .hint { font-size: 11px; color: var(--muted); line-height: 1.5; }
+  .hint code { background: var(--card2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font: 11px ui-monospace, Consolas, monospace; color: var(--ink); }
+  .card a { color: var(--accent); text-decoration: none; font-size: 11px; }
+  .card a:hover { text-decoration: underline; }
+
+  /* ── 底部 ── */
+  .foot { margin-top: 16px; padding-top: 11px; border-top: 1px dashed var(--line); display: flex; gap: 8px 20px; flex-wrap: wrap; align-items: center; font-size: 11px; color: var(--muted); }
+  .foot input { width: 66px; background: var(--card2); color: var(--ink); border: 1px solid var(--line); border-radius: 5px; padding: 3px 8px; font: inherit; }
+  .banner { display: flex; align-items: center; gap: 10px; background: rgba(224,83,83,.12); border: 1px solid var(--bad); color: #ffb3b3; border-radius: 8px; padding: 10px 14px; font-size: 13px; font-weight: 600; margin-top: 12px; }
+  .banner[hidden] { display: none; }
+  .empty { color: var(--muted); font-size: 13px; padding: 20px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topline">
+    <div>
+      <h1>API 余额与用量</h1>
+      <div class="sub" id="sub">自动发现本机已配置的模型服务</div>
+    </div>
+    <div class="tools">
+      <span class="updated"><span class="dot" id="dot"></span><span id="statusText">加载中…</span></span>
+      <button id="refreshBtn" type="button">刷新</button>
+    </div>
+  </div>
+
+  <div class="summary" id="summary"></div>
+  <div class="banner" id="banner" hidden></div>
+  <div class="grid" id="grid"></div>
+
+  <div class="foot">
+    <span>低余额告警阈值:</span>
+    <input id="thr" type="text" inputmode="decimal" placeholder="10">
+    <button id="thrSave" type="button">保存</button>
+    <span id="debugState"></span>
+  </div>
+</div>
+
+<script>
+/* 数据源:本机聚合服务(只监听环回地址,不回传任何 key) */
+const ENDPOINT = "http://127.0.0.1:9993/balances";
+const REFRESH_MS = 60000;
+const THR_KEY = "apiUsageAlertThr";
+
+const $ = (id) => document.getElementById(id);
+const fmtNum = (n, d = 2) =>
+  n === null || n === undefined || n === "" || !Number.isFinite(Number(n)) ? "—" : Number(n).toFixed(d);
+const symOf = (cur) => ({ CNY: "¥", USD: "$", EUR: "€", JPY: "¥" }[cur] || (cur ? cur + " " : ""));
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+/* 阈值:localStorage 优先,失败退回内存(file:// 下可能禁用 storage) */
+let memThr = 10;
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch { /* ignore */ } }
+};
+
+const KIND_LABEL = { balance: "余额", quota: "额度", endpoint: "端点", unsupported: "不支持" };
+
+function barClass(ratio) { return ratio >= 0.9 ? "bad" : ratio >= 0.7 ? "warn" : "ok"; }
+
+function fmtClock(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return isNaN(d) ? "—" : d.toLocaleString("zh-CN", { hour12: false, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/* ── 单张卡片 ───────────────────────────────────────────── */
+function cardHtml(p) {
+  const bal =
+    p.balance === null || p.balance === undefined || !Number.isFinite(Number(p.balance)) ? null : Number(p.balance);
+  const sym = symOf(p.currency);
+
+  // 状态类:ok / err / off(端点离线) / unc(未配置)
+  let cls = "ok";
+  if (p.status === "error") cls = "err";
+  else if (p.status === "unconfigured") cls = "unc";
+  else if (p.kind === "endpoint" && p.online === false) cls = "off";
+
+  const badge = p.kind === "endpoint"
+    ? `<span class="badge ${p.online ? "ok" : "err"}">${p.online ? "在线" : "离线"}</span>`
+    : `<span class="badge">${KIND_LABEL[p.kind] || p.kind}</span>`;
+
+  // 主数字区
+  let big;
+  if (p.status === "unconfigured") {
+    big = `<div class="big na"><span class="num">未配置 API Key</span></div>`;
+  } else if (p.unsupported) {
+    big = `<div class="big na"><span class="num">需到控制台查看</span></div>`;
+  } else if (bal !== null) {
+    big = `<div class="big"><span class="num">${sym}${fmtNum(bal)}</span><span class="cur">${esc(p.currency || "")}</span><span class="lbl">${esc(p.balance_label || "")}</span></div>`;
+  } else if (p.kind === "endpoint") {
+    big = `<div class="big na"><span class="num">${p.online ? "服务运行中" : "服务未启动"}</span></div>`;
+  } else {
+    big = `<div class="big na"><span class="num">暂无数据</span></div>`;
+  }
+
+  // 端点类卡片的主状态已在数字区展示,明细里去掉重复的"状态"行
+  const detailRows = (p.details || []).filter((d) => !(p.kind === "endpoint" && d.label === "状态"));
+  const rows = detailRows.length
+    ? `<div class="rows">${detailRows.map((d) => `<div class="row"><span class="k">${esc(d.label)}</span><span class="v">${esc(d.value)}</span></div>`).join("")}</div>`
+    : "";
+
+  const bars = (p.bars || []).length
+    ? `<div class="bars">${p.bars.map((b) => {
+        const ratio = b.cap ? b.used / b.cap : 0;
+        const c = b.exceeded ? "bad" : barClass(ratio);
+        const rt = b.resetAt ? " · 重置 " + fmtClock(new Date(b.resetAt).toISOString()) : "";
+        return `<div class="bar">
+          <div class="top"><span>${esc(b.name)}</span><span><b>${sym}${fmtNum(b.used)}</b> / ${sym}${fmtNum(b.cap)} · ${(ratio * 100).toFixed(1)}%${b.exceeded ? " · 已超限" : ""}${esc(rt)}</span></div>
+          <div class="track"><div class="fill ${c}" style="width:${Math.min(ratio * 100, 100).toFixed(1)}%"></div></div>
+        </div>`;
+      }).join("")}</div>`
+    : "";
+
+  // 底部提示
+  let foot = "";
+  if (p.status === "unconfigured") {
+    const kn = p.key_source || "对应的 API Key";
+    foot = `<div class="hint">把 <code>${esc(kn)}</code> 写进 Hermes 的 .env 即可点亮。${p.homepage ? ` <a href="${esc(p.homepage)}" target="_blank">去申请 →</a>` : ""}</div>`;
+  } else if (p.status === "error") {
+    foot = `<div class="errmsg">${esc(p.error || "查询失败")}</div>`;
+  } else if (p.unsupported) {
+    foot = `<div class="hint"><a href="${esc(p.homepage)}" target="_blank">打开控制台查看 →</a></div>`;
+  } else if (p.note) {
+    foot = `<div class="note">${esc(p.note)}</div>`;
+  }
+
+  return `<div class="card ${cls}">
+    <div class="chead"><span class="cname">${esc(p.label)}</span>${badge}</div>
+    ${big}${rows}${bars}${foot}
+  </div>`;
+}
+
+/* ── 渲染整页 ───────────────────────────────────────────── */
+function render(data) {
+  const ps = data.providers || [];
+  $("sub").textContent = `自动发现 ${data.count} 项服务 · 其中 ${data.configured_count} 项已配置`;
+  $("grid").innerHTML = ps.length
+    ? ps.map(cardHtml).join("")
+    : `<div class="empty">没有发现任何模型服务。检查 Hermes 的 config.yaml / .env 是否配置了 provider。</div>`;
+
+  const okN = ps.filter((p) => p.status === "ok").length;
+  const errN = ps.filter((p) => p.status === "error").length;
+  const uncN = ps.filter((p) => p.status === "unconfigured").length;
+  $("summary").innerHTML = [
+    `总计 <b>${ps.length}</b>`,
+    `正常 <b>${okN}</b>`,
+    errN ? `异常 <b>${errN}</b>` : null,
+    uncN ? `未配置 <b>${uncN}</b>` : null
+  ].filter(Boolean).map((s) => `<span>${s}</span>`).join("");
+
+  // 低余额告警(只针对有明确余额的卡)
+  const thrRaw = store.get(THR_KEY) ?? memThr;
+  const thr = Number(thrRaw);
+  const low = ps.filter(
+    (p) =>
+      p.balance !== null && p.balance !== undefined && Number.isFinite(Number(p.balance)) && thr > 0 && Number(p.balance) < thr
+  );
+  const banner = $("banner");
+  if (low.length) {
+    banner.hidden = false;
+    banner.textContent = `⚠️ ${low.map((p) => `${p.label} ${symOf(p.currency)}${fmtNum(p.balance)}`).join(" / ")} 已低于阈值 ${symOf(low[0].currency)}${thr}`;
+  } else banner.hidden = true;
+
+  $("debugState").textContent = `thr=${thr} · 数据 ${fmtClock(data.generated_at)}${data.cached ? " (缓存)" : ""}`;
+}
+
+/* ── 拉取 ───────────────────────────────────────────────── */
+async function tick(manual) {
+  const dot = $("dot"), st = $("statusText"), btn = $("refreshBtn");
+  if (manual) btn.disabled = true;
+  try {
+    const r = await fetch(ENDPOINT + (manual ? "?refresh=1" : ""), { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    render(await r.json());
+    dot.className = "dot ok";
+    st.textContent = "更新于 " + new Date().toLocaleTimeString("zh-CN", { hour12: false });
+  } catch (e) {
+    dot.className = "dot err";
+    st.textContent = "聚合服务未响应";
+    $("grid").innerHTML = `<div class="empty">
+      无法连接聚合服务 <code>${ENDPOINT}</code>（${esc(e.message)}）。<br><br>
+      请在项目目录启动它：<br><code>node src/server.mjs</code><br><br>
+      或安装为常驻服务：<code>scripts/install-service</code>
+    </div>`;
+    $("summary").innerHTML = "";
+  } finally {
+    if (manual) btn.disabled = false;
+  }
+}
+
+/* 阈值控件 */
+(function initThr() {
+  const input = $("thr");
+  const stored = store.get(THR_KEY) ?? memThr;
+  input.value = stored ?? "10";
+  const apply = () => {
+    const v = parseFloat(input.value);
+    if (Number.isFinite(v) && v > 0) { memThr = v; store.set(THR_KEY, String(v)); tick(false); }
+  };
+  $("thrSave").onclick = apply;
+  input.addEventListener("input", apply);
+})();
+
+$("refreshBtn").onclick = () => tick(true);
+tick(false);
+setInterval(() => tick(false), REFRESH_MS);
+</script>
+</body>
+</html>
