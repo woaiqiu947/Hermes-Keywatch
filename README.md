@@ -1,5 +1,9 @@
 # hermes-api-usage
 
+> **⚠️ 实现状态**:本仓库当前代码早于 [`hermes-keywatch-design.md`](./hermes-keywatch-design.md)(方案文档 v1.0),
+> 是一份**已验证可运行的纵向切片**,但架构与方案不完全一致(未采用"声明式注册表",且未实现可用度探测降级链)。
+> 逐条差异、以及方案 M0 阻塞项的实测解答,见 [`docs/IMPLEMENTATION-STATUS.md`](./docs/IMPLEMENTATION-STATUS.md)。
+
 给 **Hermes Desktop** 用的多厂商 API 余额 / 用量仪表盘。
 自动发现这台机器上配置过的所有模型服务,把它们的余额、订阅额度、在线状态汇总进一个侧边栏页面。
 
