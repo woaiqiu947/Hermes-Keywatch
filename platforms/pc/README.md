@@ -5,8 +5,8 @@
 ## 首次部署
 
 ```bash
-git clone <本仓库> D:/sourceTree/hermes-api-usage
-cd /d/sourceTree/hermes-api-usage
+git clone https://github.com/woaiqiu947/Hermes-Keywatch.git D:/sourceTree/Hermes-Keywatch
+cd /d/sourceTree/Hermes-Keywatch
 
 # 1) 先看看这台机器发现了什么
 node src/discover.mjs
@@ -55,7 +55,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install-service.ps1 -Remove
 ## 升级
 
 ```bash
-cd /d/sourceTree/hermes-api-usage
+cd /d/sourceTree/Hermes-Keywatch
 git pull
 bash scripts/install.sh          # 重新把 dashboard.html + plugin.js 装进 Hermes
 # 服务是每次请求现读代码的,但改了 src/ 后建议重启一次:

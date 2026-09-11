@@ -100,7 +100,7 @@ provider 或者 `.env` 里有 key,它就会出现。
 需要 **Node.js ≥ 18**。零 npm 依赖,不用 `npm install`。
 
 ```bash
-git clone <本仓库> && cd hermes-api-usage
+git clone https://github.com/woaiqiu947/Hermes-Keywatch.git && cd Hermes-Keywatch
 
 # 1) 看看这台机器发现了什么(不打印任何 key 的值)
 node src/discover.mjs
@@ -142,7 +142,8 @@ Windows 用计划任务 + `scripts/watchdog.ps1`(每分钟探一次 `/health`,�
 这个仓库本身就是为多机设计的,新机器上只要两步:
 
 ```bash
-git clone <本仓库> && cd hermes-api-usage
+git clone https://github.com/woaiqiu947/Hermes-Keywatch.git
+cd Hermes-Keywatch
 bash scripts/install.sh --service
 ```
 
@@ -179,6 +180,8 @@ bash scripts/install.sh --service
 | 智谱返回"令牌已过期" | 该端点对无效 key 也返回 HTTP 200,看 `success` 字段;确认是 GLM Coding Plan 还是按量账户 |
 | 侧边栏没有「API 用量」 | 改插件后热加载偶尔不触发,重启一次桌面应用 |
 | `Failed to construct 'URL': Invalid URL` | 插件是以 **Blob URL** 被 `import()` 的,`import.meta.url` 不可用 —— 用 `install.sh` 安装(它会注入绝对路径),别手抄 `plugin.js` |
+| `schtasks` 报「任务 XML 格式错误 … 无法切换编码」 | 任务 XML **必须**写成 UTF-16LE(带 BOM,声明改成 `UTF-16`)。schtasks 在本机拒收 UTF-8 的任务 XML——拿 `commandcode-bridge` 那份已知可用的 XML 对照,同样报错。`install-service.ps1` 已自动转换,别手写 UTF-8 的 XML |
+| PowerShell 脚本报「字符串缺少终止符」 | `.ps1` 里**不要写非 ASCII 字符**:PowerShell 5.1 读无 BOM 的 UTF-8 `.ps1` 会按 GBK 解码,中文会破坏引号解析。本仓库的 `.ps1` 一律纯 ASCII(注释也是) |
 | 本地端点显示"离线" | 该端口没在跑 llama.cpp,属正常 |
 
 ## 目录结构
@@ -190,12 +193,14 @@ bash scripts/install.sh --service
 │   ├── server.mjs        # 聚合 HTTP 服务
 │   ├── discover.mjs      # 调试:打印发现了什么
 │   └── providers/        # 每个厂商一个适配器
-├── dashboard/index.html  # 仪表盘页面(如果rame 嵌入,无 key)
+├── dashboard/index.html  # 仪表盘页面(iframe 嵌入,不含任何 key)
 ├── plugin/plugin.js      # Hermes 桌面插件(模板,安装时注入路径)
 ├── scripts/
-│   ├── install.sh
-│   ├── install-service.ps1
-│   └── watchdog.ps1
+│   ├── install.sh              # 插件 + 仪表盘安装(macOS 可加 --service)
+│   ├── install-service.ps1     # Windows:注册计划任务(经 schtasks /XML)
+│   ├── watchdog-task.xml.template  # 任务定义模板(占位符,安装时替换)
+│   ├── run-hidden.vbs          # 无窗口启动器,避免每分钟闪黑窗
+│   └── watchdog.ps1            # 每分钟健康检查,挂了就拉起
 └── platforms/            # 各机器的安装笔记
 ```
 

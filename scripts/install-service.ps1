@@ -1,57 +1,80 @@
-# install-service.ps1 — 注册 Windows 计划任务,让聚合服务常驻并自愈。
+# install-service.ps1 - register a Windows scheduled task so the aggregation
+# service stays resident and self-heals.
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\install-service.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\install-service.ps1 -Remove
 #
-# 做法:每分钟触发一次 watchdog.ps1,它做健康检查,不健康就把服务拉起来。
-# 这跟 commandcode-bridge 用的是同一套模式。
+# Approach: fire run-hidden.vbs once a minute; it launches watchdog.ps1 with no
+# console flash, and the watchdog health-checks the service and restarts it if
+# it died. Same pattern as commandcode-bridge.
+#
+# Why schtasks /XML and not Register-ScheduledTask: creating a task with the
+# *cmdlet* needs administrator rights (HRESULT 0x80070005). Importing an XML
+# that declares a per-user task (UserId + LogonType InteractiveToken) works as a
+# normal user, which is why this script ships a template instead of a cmdlet call.
+#
+# NOTE: keep this file ASCII-only. Windows PowerShell 5.1 reads .ps1 as ANSI
+# (GBK on Chinese Windows) when there is no BOM, so non-ASCII text here gets
+# mis-decoded and breaks parsing with a "terminator expected" error.
 param([switch]$Remove)
 
 $ErrorActionPreference = 'Stop'
 $TaskName = 'HermesApiUsage'
 
 $repo     = Split-Path -Parent $PSScriptRoot
+$template = Join-Path $PSScriptRoot 'watchdog-task.xml.template'
 $watchdog = Join-Path $PSScriptRoot 'watchdog.ps1'
+$vbs      = Join-Path $PSScriptRoot 'run-hidden.vbs'
 
 if ($Remove) {
-  Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
-  Write-Host "✓ 已移除计划任务 $TaskName"
+  schtasks /Delete /TN $TaskName /F *> $null
+  Write-Host "Removed scheduled task '$TaskName' (if it existed)."
   exit 0
 }
 
-if (-not (Test-Path $watchdog)) { throw "找不到 $watchdog" }
+foreach ($f in @($template, $watchdog, $vbs)) {
+  if (-not (Test-Path $f)) { throw "missing required file: $f" }
+}
 $node = (Get-Command node -ErrorAction SilentlyContinue).Source
-if (-not $node) { throw "node 不在 PATH 上,请先装 Node.js (>=18)" }
+if (-not $node) { throw "node not on PATH. Install Node.js (>=18) first." }
 
-$action = New-ScheduledTaskAction `
-  -Execute 'powershell.exe' `
-  -Argument "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$watchdog`""
+# Fill the template. USERDOMAIN\USERNAME form works for both local and AD accounts.
+$user = "$env:USERDOMAIN\$env:USERNAME"
+$date = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss')
 
-# 登录时启动 + 之后每分钟复查一次
-$triggerLogon = New-ScheduledTaskTrigger -AtLogOn
-$triggerTick  = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
-                  -RepetitionInterval (New-TimeSpan -Minutes 1)
+$xml = Get-Content $template -Raw
+$xml = $xml.Replace('__USER__', $user)
+$xml = $xml.Replace('__DATE__', $date)
+$xml = $xml.Replace('__VBS__',  $vbs)
 
-$settings = New-ScheduledTaskSettingsSet `
-  -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-  -StartWhenAvailable -MultipleInstances IgnoreNew `
-  -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+# Generated XML goes to TEMP, never into the repo (it carries real paths).
+#
+# It must be written as UTF-16LE with a BOM, and the declaration rewritten to
+# match. schtasks' XML parser on this machine REJECTS a UTF-8 document outright
+# with "task XML is malformed (1,40) cannot switch encoding" -- verified by
+# feeding it the known-good commandcode-bridge XML, which now fails the same
+# way. UTF-16 is Task Scheduler's own export format and imports cleanly. The
+# template itself stays UTF-8 in the repo so it remains readable/diffable in
+# git; the encoding conversion happens only here, on the way out.
+$tmpXml = Join-Path $env:TEMP 'HermesApiUsage.task.xml'
+$xml = $xml -replace 'encoding="UTF-8"', 'encoding="UTF-16"'
+[System.IO.File]::WriteAllText($tmpXml, $xml, [System.Text.Encoding]::Unicode)
 
-Register-ScheduledTask -TaskName $TaskName `
-  -Action $action -Trigger @($triggerLogon, $triggerTick) -Settings $settings `
-  -Description 'Hermes API 余额聚合服务 (127.0.0.1:9993) 看门狗' -Force | Out-Null
+schtasks /Create /TN $TaskName /XML $tmpXml /F | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "schtasks /Create failed (exit $LASTEXITCODE). See output above." }
+Write-Host "Registered scheduled task '$TaskName' (every 1 minute, per-user)."
 
-Write-Host "✓ 已注册计划任务 $TaskName"
-Write-Host "  现在立即跑一次 watchdog…"
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $watchdog
-Start-Sleep -Seconds 2
+Write-Host "Running the watchdog once now..."
+& wscript.exe $vbs
+Start-Sleep -Seconds 4
 
 try {
-  $r = Invoke-WebRequest -Uri 'http://127.0.0.1:9993/health' -TimeoutSec 5 -UseBasicParsing
-  Write-Host "✓ 服务已就绪: $($r.Content)"
+  $r = Invoke-WebRequest -Uri 'http://127.0.0.1:9993/health' -TimeoutSec 6 -UseBasicParsing
+  Write-Host "Service ready: $($r.Content)"
 } catch {
-  Write-Host "! 服务还没起来,请检查 $repo\watchdog.log"
+  Write-Host "Service not answering yet; check $repo\watchdog.log"
 }
 
 Write-Host ""
-Write-Host "卸载: powershell -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Remove"
+Write-Host "Inspect : schtasks /Query /TN $TaskName /V /FO LIST"
+Write-Host "Uninstall: powershell -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Remove"
